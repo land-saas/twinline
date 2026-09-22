@@ -8,7 +8,7 @@ A minimal black-and-white co-op game for **two players on one keyboard**. Fly th
 
 ## Play
 
-Download **Twinline-macOS-v0.1.0.zip** from this repository's Releases page, unzip it, and open **Twinline.app**. Unity is not needed to play.
+Download **Twinline-macOS-v0.1.0.zip** from the [Releases page](https://github.com/land-saas/twinline/releases), unzip it, and open **Twinline.app**. Unity is not needed to play.
 
 - **macOS 12 or later**, Intel or Apple silicon.
 - Local two-player play on one keyboard.
