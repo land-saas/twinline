@@ -1,0 +1,17 @@
+Twinline — shared-camera and progressive-hold revision
+Validated in Unity 6000.3.24f1 on 2026-09-21.
+
+TWINLINE_PROGRESSIVE_HOLD_PASSED: same continuous key, distance 1.176 at 0.6s -> 0.650 at 1.5s; minimum spacing and release checked.
+TWINLINE_PREVIEW_PASSED: 1.224 units of visible pull within 0.6 seconds; release motion and clean start.
+TWINLINE_REEL_PASSED: rescued partner by 0.884, sideways motion 0.734; tap/hold distinction, live length limit, continuous hold, momentum on release/reversal, and pause input cleanup.
+TWINLINE_TWO_PLAYER_REEL_PASSED: minimum length, sustained hold, reversal under tension, payout and separation.
+TWINLINE_WARNING_PASSED: reel=False, 9 flips, 9 advance warnings, shortest 2.010s; direction and pause checked.
+TWINLINE_ROUTE_PASSED: reel=False, 36 tubes, 9 reversals, 0 reels, 13888 steps, max separation 2.536, shortest rope 2.800.
+TWINLINE_WARNING_PASSED: reel=True, 9 flips, 9 advance warnings, shortest 2.010s; direction and pause checked.
+TWINLINE_ROUTE_PASSED: reel=True, 36 tubes, 9 reversals, 35 reels, 13888 steps, max separation 2.800, shortest rope 1.008.
+TWINLINE_VALIDATION_PASSED: passive flight and active cooperative reeling routes, rescue, momentum, live rope limits, paired score, pause, crash and clean restart.
+TWINLINE_MAC_BUILD_PASSED: ../Twinline.app
+TWINLINE_VISUAL_PASSED: one shared view, short hold, longer hold, release, large start countdown, two-second warning, one-second warning, reversed gravity; captured to ../Twinline-checks
+
+Eight actual rendered frames were inspected in ../Twinline-checks.
+Automated routes check physics stability; human co-op playtesting is still needed to judge enjoyment.
