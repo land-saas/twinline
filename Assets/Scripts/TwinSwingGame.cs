@@ -5,7 +5,7 @@ using UnityEngine;
 /// <summary>Rope-swing collectathon: Space attaches to the nearest anchor, Space again releases.</summary>
 public sealed class TwinSwingGame : MonoBehaviour
 {
-    public enum Mode { Ready, Countdown, Flying, Crashed, Paused }
+    public enum Mode { Ready, Countdown, Flying, Crashed }
 
     public Mode State { get; private set; }
     public int Score { get; private set; }
@@ -22,17 +22,18 @@ public sealed class TwinSwingGame : MonoBehaviour
     public float gemSpacing=4.6f;
     public float minRopeLength=.75f;
     public float maxRopeLength=6.8f;
-    public float reelSpeed=3.6f;
     public float swingBoost=0.7f;
-    public float minimumSwingSpeed=2.25f;
-    public float momentumAssist=5.5f;
+    public float chargeHoldDelay=.16f;
+    public float pumpChargeTime=.75f;
+    public float lowMomentumSpeed=3f;
+    public float minimumPumpImpulse=1.2f;
+    public float maximumPumpImpulse=4.8f;
     public const int Seed=4173;
     public static readonly Color PlayerRed=new Color(1f,.28f,.22f);
     public static readonly Color NodeYellow=new Color(1f,.88f,.18f);
     public static readonly Color GemGold=new Color(1f,.68f,.08f);
     public static readonly Color RopeTint=new Color(1f,.92f,.42f);
     private static readonly Color Dark=Color.black;
-    private static readonly Color Muted=new Color(.58f,.58f,.58f);
     private static readonly Color HudPaper=new Color(.95f,.95f,.95f);
 
     public sealed class GemPickup : MonoBehaviour
@@ -55,16 +56,16 @@ public sealed class TwinSwingGame : MonoBehaviour
     private readonly List<UnityEngine.Object> resources=new List<UnityEngine.Object>();
     private DistanceJoint2D swingJoint;
     private Anchor activeAnchor;
+    private Transform playerVisual;
     private Mesh disc;
     private Material ink;
     private AudioSource audioSource;
     private AudioClip attachSound,releaseSound,gemSound,crashSound;
     private System.Random rng;
     private Vector3 cameraCenter;
-    private float countdown,crashAge,flash,shake,runTime,attachPulse,attachRopeLength;
+    private float countdown,crashAge,flash,shake,runTime,attachPulse,attachRopeLength,spaceHoldAge,pumpCharge;
     private int nextAnchor,nextGem;
-    private bool built;
-    private Mode beforePause;
+    private bool built,spaceHolding,attachedThisPress;
     private GUIStyle labelStyle,hintStyle,countStyle;
 
     private void Awake() { BuildWorld();ResetRun(); }
@@ -85,7 +86,7 @@ public sealed class TwinSwingGame : MonoBehaviour
         player.collisionDetectionMode=CollisionDetectionMode2D.Continuous;
         playerObject.AddComponent<CircleCollider2D>().radius=.205f;
         var avatar=playerObject.AddComponent<SwingPlayer>();avatar.game=this;
-        Draw("Player body",disc,Vector2.zero,new Vector2(.235f,.235f),PlayerRed,12,playerObject.transform);
+        playerVisual=Draw("Player body",disc,Vector2.zero,new Vector2(.235f,.235f),PlayerRed,12,playerObject.transform);
 
         sharedCamera=new GameObject("Shared camera").AddComponent<Camera>();
         sharedCamera.transform.SetParent(transform);sharedCamera.tag="MainCamera";
@@ -116,7 +117,8 @@ public sealed class TwinSwingGame : MonoBehaviour
         State=Mode.Ready;Score=0;runTime=0;nextAnchor=0;nextGem=0;
         Best=PlayerPrefs.GetInt("TwinSwingBest",0);
         rng=new System.Random(Seed);
-        countdown=crashAge=flash=shake=attachPulse=0;
+        countdown=crashAge=flash=shake=attachPulse=spaceHoldAge=pumpCharge=0;
+        spaceHolding=attachedThisPress=false;
         ReleaseSwing();
         player.simulated=true;
         player.transform.position=player.position=new Vector2(0,1.2f);
@@ -138,13 +140,14 @@ public sealed class TwinSwingGame : MonoBehaviour
 
     private void Update()
     {
-        if(Input.GetKeyDown(KeyCode.Escape))
+        if(Input.GetKeyDown(KeyCode.Space)) HandleSpacePressed();
+        if(Input.GetKeyUp(KeyCode.Space)) HandleSpaceReleased();
+        if(State==Mode.Flying && Attached && spaceHolding && !attachedThisPress)
         {
-            if(State==Mode.Flying || State==Mode.Countdown) SetPaused(true);
-            else if(State==Mode.Paused) SetPaused(false);
+            spaceHoldAge+=Time.deltaTime;
+            if(spaceHoldAge>=chargeHoldDelay)
+                pumpCharge=Mathf.MoveTowards(pumpCharge,1f,Time.deltaTime/Mathf.Max(.1f,pumpChargeTime));
         }
-        if(Input.GetKeyDown(KeyCode.Space)) HandleSpace();
-        if(Input.GetKeyDown(KeyCode.Tab) && State==Mode.Ready) SwitchToCoopFlight();
         if(State==Mode.Crashed) crashAge+=Time.unscaledDeltaTime;
         flash=Mathf.MoveTowards(flash,0,Time.unscaledDeltaTime*2.8f);
         shake=Mathf.MoveTowards(shake,0,Time.unscaledDeltaTime*1.6f);
@@ -153,12 +156,31 @@ public sealed class TwinSwingGame : MonoBehaviour
 
     private void FixedUpdate() => Step(Time.fixedDeltaTime);
 
-    private void HandleSpace()
+    private void HandleSpacePressed()
     {
         if(State==Mode.Ready) StartRun();
         else if(State==Mode.Crashed && crashAge>.2f) { ResetRun();StartRun(); }
-        else if(State==Mode.Paused) SetPaused(false);
-        else if(State==Mode.Flying) ToggleSwing();
+        else if(State==Mode.Flying)
+        {
+            spaceHolding=true;spaceHoldAge=pumpCharge=0;
+            if(!Attached)
+            {
+                TryAttach();
+                attachedThisPress=Attached;
+            }
+            else attachedThisPress=false;
+        }
+    }
+
+    private void HandleSpaceReleased()
+    {
+        if(State==Mode.Flying && spaceHolding && Attached && !attachedThisPress)
+        {
+            if(pumpCharge>0) PumpSwing();
+            else ReleaseSwing();
+        }
+        spaceHolding=attachedThisPress=false;
+        spaceHoldAge=0;
     }
 
     public void ToggleSwing()
@@ -209,17 +231,10 @@ public sealed class TwinSwingGame : MonoBehaviour
         player.linearVelocity=tangent*speedBoost*(1f+sideEntry*.35f);
     }
 
-    private void StepRopeLength(float dt)
-    {
-        if(!Attached || swingJoint==null) return;
-        if(!Input.GetKey(KeyCode.W)) return;
-        attachRopeLength=Mathf.Max(minRopeLength,attachRopeLength-reelSpeed*dt);
-        swingJoint.distance=attachRopeLength;
-    }
-
     public void ReleaseSwing()
     {
         activeAnchor=null;
+        pumpCharge=0;
         if(swingJoint!=null)
         {
             Destroy(swingJoint);
@@ -244,24 +259,13 @@ public sealed class TwinSwingGame : MonoBehaviour
     {
         if(State!=Mode.Flying) return;
         State=Mode.Crashed;crashAge=0;
+        spaceHolding=attachedThisPress=false;spaceHoldAge=pumpCharge=0;
         ReleaseSwing();
         player.simulated=false;
         Best=Mathf.Max(Best,Score);
         PlayerPrefs.SetInt("TwinSwingBest",Best);PlayerPrefs.Save();
         flash=.22f;shake=.14f;
         Play(crashSound,.35f);
-    }
-
-    public void SetPaused(bool paused)
-    {
-        if(paused && (State==Mode.Flying || State==Mode.Countdown))
-        {
-            beforePause=State;State=Mode.Paused;player.simulated=false;
-        }
-        else if(!paused && State==Mode.Paused)
-        {
-            State=beforePause;player.simulated=State==Mode.Flying;
-        }
     }
 
     private void Step(float dt)
@@ -282,8 +286,6 @@ public sealed class TwinSwingGame : MonoBehaviour
         }
         if(State!=Mode.Flying) return;
         runTime+=dt;
-        StepRopeLength(dt);
-        StepSwingAssist();
 
         if(!Attached)
         {
@@ -302,7 +304,7 @@ public sealed class TwinSwingGame : MonoBehaviour
 
     }
 
-    private void StepSwingAssist()
+    private void PumpSwing()
     {
         if(!Attached || activeAnchor==null) return;
         Vector2 radial=player.position-activeAnchor.body.position;
@@ -317,9 +319,15 @@ public sealed class TwinSwingGame : MonoBehaviour
             tangent=-tangent;
 
         float speed=Mathf.Abs(tangentialSpeed);
-        if(speed>=minimumSwingSpeed) return;
-        float recovery=1-speed/minimumSwingSpeed;
-        player.AddForce(tangent*(momentumAssist*recovery)*player.mass);
+        float recovery=1-Mathf.Clamp01(speed/Mathf.Max(.1f,lowMomentumSpeed));
+        float impulse=Mathf.Lerp(minimumPumpImpulse,maximumPumpImpulse,pumpCharge)*
+            Mathf.Lerp(.25f,1f,recovery);
+        player.AddForce(tangent*(impulse*player.mass),ForceMode2D.Impulse);
+        flash=Mathf.Max(flash,.045f+pumpCharge*.055f);
+        shake=Mathf.Max(shake,.02f+pumpCharge*.025f);
+        attachPulse=.25f;
+        Play(attachSound,.24f);
+        pumpCharge=0;
     }
 
     private void RecycleAnchors()
@@ -424,6 +432,9 @@ public sealed class TwinSwingGame : MonoBehaviour
             bool inRange=!Attached && anchor==highlight && distance<=attachRange;
             anchor.ring.localScale=Vector3.one*(inRange?1.35f:1f);
         }
+        float playerScale=.235f*(1+pumpCharge*.5f);
+        Vector3 playerTarget=new Vector3(playerScale,playerScale,1);
+        playerVisual.localScale=Vector3.Lerp(playerVisual.localScale,playerTarget,1-Mathf.Exp(-12*Time.unscaledDeltaTime));
         cameraCenter=Vector3.Lerp(cameraCenter,CameraTarget(),1-Mathf.Exp(-6*Time.unscaledDeltaTime));
         sharedCamera.transform.position=cameraCenter+
             new Vector3(Mathf.Sin(Time.unscaledTime*67),Mathf.Cos(Time.unscaledTime*73),0)*shake;
@@ -461,17 +472,17 @@ public sealed class TwinSwingGame : MonoBehaviour
         float center=guiWidth*.5f;
         FloatingText(new Rect(center-110,22,220,65),$"GEMS {Score:00}",labelStyle,new Color(.85f,.85f,.85f));
 
-        if(State==Mode.Ready || State==Mode.Crashed || State==Mode.Paused)
+        if(State==Mode.Ready || State==Mode.Crashed)
         {
-            string action=State==Mode.Ready?"SPACE · BEGIN":State==Mode.Crashed?"SPACE · RETRY":"SPACE · RESUME";
+            string action=State==Mode.Ready?"SPACE · BEGIN":"SPACE · RETRY";
             hintStyle.normal.textColor=HudPaper;
-            if(GUI.Button(new Rect(center-160,830,320,48),action,hintStyle)) HandleSpace();
+            if(GUI.Button(new Rect(center-160,830,320,48),action,hintStyle)) HandleSpacePressed();
         }
 
         if(State==Mode.Flying)
         {
             FindNearestAnchor(out float nearestDistance);
-            string ropeHint=Attached?"SPACE · RELEASE":
+            string ropeHint=pumpCharge>0?"RELEASE · BOOST":Attached?"SPACE · RELEASE / HOLD · BOOST":
                 nearestDistance<=attachRange?"SPACE · ATTACH":"";
             if(!string.IsNullOrEmpty(ropeHint))
                 SmallHint(center-170,104,340,ropeHint,.92f);
@@ -481,9 +492,6 @@ public sealed class TwinSwingGame : MonoBehaviour
         {
             FloatingText(new Rect(center-125,122,250,157),Mathf.CeilToInt(countdown).ToString(),countStyle,HudPaper);
         }
-
-        if(State==Mode.Paused)
-            FloatingText(new Rect(center-160,140,320,48),"PAUSED",hintStyle,Muted);
 
         if(flash>0) Box(0,0,guiWidth,900,new Color(1,1,1,flash*.35f));
     }
@@ -571,13 +579,4 @@ public sealed class TwinSwingGame : MonoBehaviour
         if(Application.isPlaying && audioSource!=null && clip!=null) audioSource.PlayOneShot(clip,volume);
     }
 
-    private void SwitchToCoopFlight()
-    {
-        DisposeWorld();built=false;
-        enabled=false;
-        var flightObject=new GameObject("Twinline co-op");
-        var flight=flightObject.AddComponent<TwinFlightGame>();
-        flight.singlePlayer=false;
-        Destroy(gameObject);
-    }
 }

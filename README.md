@@ -2,7 +2,7 @@
 
 Swing on a rope. Collect gems. Let go at the right moment.
 
-A minimal black-and-white prototype: press **Space** near a node to attach a rope, **Space** again to release and launch into the next arc. The world scrolls; gather gems without hitting the floor or ceiling.
+A minimal one-button prototype: tap **Space** near a node to attach or release. When a swing slows down, hold Space and release it to restore momentum. The world scrolls; gather gems without hitting the floor or ceiling.
 
 ![Twinline shared-camera gameplay](docs/images/ready.png)
 
@@ -15,13 +15,9 @@ Download **Twinline-macOS-v0.1.0.zip** from the [Releases page](https://github.c
 
 | Key | Action |
 | --- | --- |
-| **Space** | Begin / retry / resume; in flight: attach or release rope |
-| **Tab** | On ready screen: open the legacy two-player co-op flight mode |
-| **Esc** | Pause / resume |
+| **Space** | Begin/retry; tap to attach or release; hold while attached and release to restore momentum |
 
 **Swing mode (default):** one circle, pendulum physics, gems for score. Nodes glow when you're close enough to attach.
-
-**Co-op flight (Tab on ready):** the earlier two-player tube-flier with rope reeling and gravity flips — kept for comparison and partner playtests.
 
 ## Open the Unity project
 
@@ -34,7 +30,7 @@ The scene builds its player, nodes, gems, and sound at runtime. No external art 
 
 ## Prototype status
 
-The active prototype is **rope swinging + gem collection**. Co-op flight remains in the codebase (`TwinFlightGame.cs`) and is reachable via **Tab** on the ready screen.
+The active prototype is **rope swinging + gem collection**. The earlier co-op implementation remains in the source for reference but is not part of the one-button game.
 
 - [Co-op flight mechanics](docs/Mechanics.md)
 - [Design research and playtest questions](Design-notes.md)
