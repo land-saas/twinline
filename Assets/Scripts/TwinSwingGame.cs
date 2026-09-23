@@ -10,6 +10,7 @@ public sealed class TwinSwingGame : MonoBehaviour
     public Mode State { get; private set; }
     public int Score { get; private set; }
     public int Best { get; private set; }
+    public float DistanceTravelled { get; private set; }
     public bool Attached => swingJoint!=null;
     public Rigidbody2D player;
     public Camera sharedCamera;
@@ -49,7 +50,6 @@ public sealed class TwinSwingGame : MonoBehaviour
     {
         public Rigidbody2D body;
         public Transform ring;
-        public Vector3 restingScale;
     }
 
     private readonly List<Anchor> anchors=new List<Anchor>();
@@ -115,7 +115,7 @@ public sealed class TwinSwingGame : MonoBehaviour
 
     public void ResetRun()
     {
-        State=Mode.Ready;Score=0;runTime=0;nextAnchor=0;nextGem=0;
+        State=Mode.Ready;Score=0;DistanceTravelled=0;runTime=0;nextAnchor=0;nextGem=0;
         Best=PlayerPrefs.GetInt("TwinSwingBest",0);
         rng=new System.Random(Seed);
         countdown=crashAge=flash=shake=attachPulse=spaceHoldAge=pumpCharge=0;
@@ -289,6 +289,7 @@ public sealed class TwinSwingGame : MonoBehaviour
         runTime+=dt;
 
         float scroll=scrollSpeed*(runTime<5f?.5f:1f)*dt;
+        DistanceTravelled+=scroll;
         foreach(var anchor in anchors)
         {
             // Keep the current pivot stable while the rest of the endless course
@@ -401,7 +402,7 @@ public sealed class TwinSwingGame : MonoBehaviour
         root.AddComponent<CircleCollider2D>().radius=.16f;
         var ring=Draw("Anchor ring",disc,Vector2.zero,new Vector2(.19f,.19f),NodeYellow,3,root.transform);
         Draw("Anchor core",disc,Vector2.zero,new Vector2(.08f,.08f),PlayerRed,4,root.transform);
-        return new Anchor{body=body,ring=ring,restingScale=ring.localScale};
+        return new Anchor{body=body,ring=ring};
     }
 
     private GemPickup CreateGem(int index)
@@ -434,9 +435,7 @@ public sealed class TwinSwingGame : MonoBehaviour
         foreach(var anchor in anchors)
         {
             bool inRange=!Attached && anchor==highlight && distance<=attachRange;
-            float factor=anchor==activeAnchor?1.12f:inRange?1.25f:1f;
-            Vector3 target=new Vector3(anchor.restingScale.x*factor,anchor.restingScale.y*factor,1);
-            anchor.ring.localScale=Vector3.Lerp(anchor.ring.localScale,target,1-Mathf.Exp(-10*Time.unscaledDeltaTime));
+            anchor.ring.localScale=Vector3.one*(inRange?1.35f:1f);
         }
         float playerScale=.235f*(1+pumpCharge*.5f);
         Vector3 playerTarget=new Vector3(playerScale,playerScale,1);
@@ -476,7 +475,8 @@ public sealed class TwinSwingGame : MonoBehaviour
         if(hintStyle==null) hintStyle=new GUIStyle(GUI.skin.label){fontSize=21,alignment=TextAnchor.MiddleCenter};
         if(countStyle==null) countStyle=new GUIStyle(GUI.skin.label){fontSize=112,fontStyle=FontStyle.Bold,alignment=TextAnchor.MiddleCenter};
         float center=guiWidth*.5f;
-        FloatingText(new Rect(24,18,220,52),$"GEMS {Score:00}",labelStyle,new Color(.85f,.85f,.85f));
+        Box(12,10,245,68,new Color(0,0,0,.78f));
+        FloatingText(new Rect(24,18,225,52),$"DIST {Mathf.FloorToInt(DistanceTravelled):000}m",labelStyle,new Color(.85f,.85f,.85f));
 
         if(State==Mode.Ready || State==Mode.Crashed)
         {
