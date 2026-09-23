@@ -49,7 +49,7 @@ public static class TwinlineSetup
     {
         if(!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
         var scene=EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,NewSceneMode.Single);
-        new GameObject("TWINLINE — press Play").AddComponent<TwinFlightGame>();
+        AddScript(new GameObject("TWINLINE — press Play"),"Assets/Scripts/TwinlineRoot.cs");
         EditorSceneManager.SaveScene(scene,ScenePath);
         EditorBuildSettings.scenes=new[]{new EditorBuildSettingsScene(ScenePath,true)};
         EditorSceneManager.playModeStartScene=AssetDatabase.LoadAssetAtPath<SceneAsset>(ScenePath);
@@ -61,7 +61,58 @@ public static class TwinlineSetup
         PlayerSettings.resizableWindow=true;PlayerSettings.runInBackground=false;
         PlayerSettings.SetApplicationIdentifier(UnityEditor.Build.NamedBuildTarget.Standalone,"com.local.twinline");
         AssetDatabase.SaveAssets();
-        Debug.Log("TWINLINE_SCENE_READY: local cooperative flight with one shared camera.");
+        Debug.Log("TWINLINE_SCENE_READY: swing prototype with co-op flight available via Tab.");
+    }
+    [MenuItem("Twinline/Reset Scene To Swing Prototype")]
+    public static void ResetSceneToSwing()
+    {
+        if(EditorApplication.isPlaying) return;
+        if(!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+        var scene=EditorSceneManager.OpenScene(ScenePath,OpenSceneMode.Single);
+        ConfigureSwingRoot(FindPlayRoot());
+        EditorSceneManager.SaveScene(scene);
+        Debug.Log("TWINLINE_SCENE_RESET: ready for swing prototype.");
+    }
+    private static Type LoadScriptType(string assetPath)
+    {
+        var script=AssetDatabase.LoadAssetAtPath<MonoScript>(assetPath);
+        return script?.GetClass();
+    }
+    private static Component AddScript(GameObject host,string assetPath)
+    {
+        var type=LoadScriptType(assetPath);
+        if(type==null) throw new Exception("Missing script: "+assetPath);
+        return host.AddComponent(type);
+    }
+    private static GameObject FindPlayRoot()
+    {
+        var root=GameObject.Find("TWINLINE — press Play");
+        if(root==null) root=FindObjectByScript("Assets/Scripts/TwinlineRoot.cs");
+        if(root==null) root=FindObjectByScript("Assets/Scripts/TwinSwingGame.cs");
+        if(root==null) root=FindObjectByScript("Assets/Scripts/TwinFlightGame.cs");
+        return root;
+    }
+    private static GameObject FindObjectByScript(string assetPath)
+    {
+        var type=LoadScriptType(assetPath);
+        if(type==null) return null;
+        var found=UnityEngine.Object.FindFirstObjectByType(type);
+        return found is Component component?component.gameObject:found as GameObject;
+    }
+    private static void ConfigureSwingRoot(GameObject root)
+    {
+        if(root==null) return;
+        var rootType=LoadScriptType("Assets/Scripts/TwinlineRoot.cs");
+        var swingType=LoadScriptType("Assets/Scripts/TwinSwingGame.cs");
+        var flightType=LoadScriptType("Assets/Scripts/TwinFlightGame.cs");
+        foreach(var component in root.GetComponents<MonoBehaviour>())
+        {
+            var type=component.GetType();
+            if(rootType!=null && type==rootType) continue;
+            if((swingType!=null && type==swingType) || (flightType!=null && type==flightType))
+                UnityEngine.Object.DestroyImmediate(component);
+        }
+        if(rootType!=null && root.GetComponent(rootType)==null) root.AddComponent(rootType);
     }
     [MenuItem("Twinline/Validate Flight Mechanics")]
     public static void Validate()
@@ -72,7 +123,12 @@ public static class TwinlineSetup
         {
             EditorSceneManager.OpenScene(ScenePath);
             var game=UnityEngine.Object.FindFirstObjectByType<TwinFlightGame>();
-            game.ValidationMode=true;game.BuildWorld();game.ResetRun();game.StartRun(true);
+            if(game==null)
+            {
+                var host=new GameObject("Twinline validation flight");
+                game=host.AddComponent<TwinFlightGame>();
+            }
+            game.singlePlayer=false;game.ValidationMode=true;game.BuildWorld();game.ResetRun();game.StartRun(true);
             Physics2D.simulationMode=SimulationMode2D.Script;Physics2D.SyncTransforms();
             Check(game.GetComponentsInChildren<Camera>().Length==1 && game.sharedCamera.rect==new Rect(0,0,1,1),"The game must use one full-screen camera");
             Check(game.birds[0].position.x < -1 && game.birds[1].position.x > 1,"Player lanes overlapped");
@@ -107,7 +163,40 @@ public static class TwinlineSetup
             game.ReverseGravity();
             Check(v0==game.birds[0].linearVelocity && v1==game.birds[1].linearVelocity,"Fault changed existing momentum");
             Check(game.birds[0].gravityScale<0 && game.birds[1].gravityScale<0,"Gravity must reverse together");
+            game.ResetRun();game.StartRun(true);
+            game.SetHeld(0,true);
+            for(int n=0;n<25;n++) { game.Step(.01f);Physics2D.Simulate(.01f); }
+            Check(game.IsReeling(0),"Hold should reel outside of a gravity transition");
+            Check(game.TryBeginGravityWarning(),"Warning should start in a safe window");
+            Check(!game.IsReeling(0),"Warning must clear held input");
+            game.SetHeld(0,true);
+            for(int n=0;n<25;n++) { game.Step(.01f);Physics2D.Simulate(.01f); }
+            Check(!game.IsReeling(0),"Hold must not reel during gravity warning");
+            for(int n=0;n<320;n++) { game.Step(.01f);Physics2D.Simulate(.01f); }
+            Check(!game.IsReeling(0),"Flip must clear held input");
+            Check(game.GravitySign==-1,"Warning should finish in a completed flip");
+            Check(!game.FlipCoopReady,"Both players must tap again before reeling");
+            game.QueueFlap(0);
+            for(int n=0;n<3;n++) { game.Step(.01f);Physics2D.Simulate(.01f); }
+            Check(!game.FlipCoopReady && !game.IsReeling(0),"One tap after flip must not unlock reeling");
+            game.SetHeld(0,true);
+            for(int n=0;n<25;n++) { game.Step(.01f);Physics2D.Simulate(.01f); }
+            Check(!game.IsReeling(0),"Holding with only one post-flip tap must not reel");
+            game.QueueFlap(1);
+            for(int n=0;n<3;n++) { game.Step(.01f);Physics2D.Simulate(.01f); }
+            Check(game.FlipCoopReady,"Both post-flip taps must unlock cooperative reeling");
+            game.SetHeld(0,true);
+            for(int n=0;n<25;n++) { game.Step(.01f);Physics2D.Simulate(.01f); }
+            Check(game.IsReeling(0),"Reeling should work after both players tap");
+            game.ResetRun();
+            game.BeginGravityPractice();
+            Check(game.GravityPractice && game.FaultWarning>0,"Ready practice should start with a warning");
+            for(int n=0;n<320;n++) { game.Step(.01f);Physics2D.Simulate(.01f); }
+            Check(game.GravitySign==-1 && game.birds[0].gravityScale<0,"Ready practice should complete a flip");
+            game.EndGravityPractice();
+            Check(!game.GravityPractice && game.birds[0].gravityScale==0,"Ready practice should restore zero-g playground");
             // Stretch the tether with opposing velocities. It must pull the other bird.
+            game.ResetRun();game.StartRun(true);
             game.birds[0].gravityScale=game.birds[1].gravityScale=0;
             game.birds[0].position=new Vector2(-1.2f,1.1f);game.birds[1].position=new Vector2(1.2f,-1.1f);
             game.birds[0].linearVelocity=Vector2.up*2;game.birds[1].linearVelocity=Vector2.down*2;

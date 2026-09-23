@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-/// <summary>Local two-player flight in one continuous view, with one physical tether.</summary>
+/// <summary>Local flight prototype: solo tap-only or two-player co-op with a physical tether.</summary>
 public sealed class TwinFlightGame : MonoBehaviour
 {
     public enum Mode { Ready, Countdown, Flying, Crashed, Paused }
@@ -12,6 +12,8 @@ public sealed class TwinFlightGame : MonoBehaviour
     public int Faults { get; private set; }
     public int GravitySign { get; private set; } = 1;
     public bool ValidationMode { get; set; }
+    public bool singlePlayer=true;
+    private bool IsSolo => singlePlayer && !ValidationMode;
     public float RunTime { get; private set; }
     public float FaultWarning { get; private set; } = -1;
     public Rigidbody2D[] birds;
@@ -37,13 +39,26 @@ public sealed class TwinFlightGame : MonoBehaviour
     public float laneSpring=3.2f;
     public float laneDamping=.95f;
     public const float GravityWarningDuration=2f;
+    public const float FirstFlipWarningDuration=3f;
     public const float WarningScrollFactor=.3f;
+    public const float FlipSettleScrollFactor=.12f;
+    public const float FirstFlipSettleDuration=2.8f;
+    public const float FlipSettleDuration=1.2f;
+    public const float FirstFlipGap=4.5f;
     public float FlipNotice { get; private set; }
+    public bool GravityPractice { get; private set; }
+    public bool InGravityTransition => FaultWarning>0 || FlipNotice>0;
     public string FlipWarningLabel => "GRAVITY "+(GravitySign==1?"↑":"↓")+" IN "+Mathf.CeilToInt(Mathf.Max(0,FaultWarning));
+    public string TapDirectionLabel => IsSolo
+        ?(GravitySign==1?"W WILL PUSH ↓":"W WILL PUSH ↑")
+        :(GravitySign==1?"W / ↑ WILL PUSH ↓":"W / ↑ WILL PUSH ↑");
     public float Speed => Mathf.Min(3.45f,baseSpeed+Score*.025f);
     public float Tension => Mathf.InverseLerp(tether.distance-.5f,tether.distance,Vector2.Distance(birds[0].position,birds[1].position));
     public float ReelAmount => Mathf.InverseLerp(ropeLength,reeledLength,tether.distance);
-    public bool IsReeling(int player) => held[player] && heldTime[player]>=holdThreshold;
+    public bool FlipCoopReady { get; private set; } = true;
+    public float FlipSettle { get; private set; }
+    public float TubeScrollFactor => FaultWarning>0?WarningScrollFactor:FlipSettle>0?FlipSettleScrollFactor:1f;
+    public bool IsReeling(int player) => held[player] && heldTime[player]>=holdThreshold && !InGravityTransition && FlipCoopReady;
     public int ReelUses { get; private set; }
     public Vector2[] Velocities => new[]{birds[0].linearVelocity,birds[1].linearVelocity};
     public const int Seed=4173;
@@ -55,7 +70,7 @@ public sealed class TwinFlightGame : MonoBehaviour
     private readonly List<UnityEngine.Object> resources=new List<UnityEngine.Object>();
     private readonly float[] cooldown=new float[2],buffer=new float[2],pulse=new float[2];
     private readonly float[] heldTime=new float[2];
-    private readonly bool[] held=new bool[2];
+    private readonly bool[] held=new bool[2],postFlipTap=new bool[2];
     private readonly LineRenderer[] birdRing=new LineRenderer[2],flapRing=new LineRenderer[2];
     private Vector3 cameraCenter;
     private System.Random rng;
@@ -72,7 +87,7 @@ public sealed class TwinFlightGame : MonoBehaviour
     private float guiWidth;
     private Mode beforePause;
     private bool built;
-    private bool reelLessonSeen,releaseLessonSeen;
+    private bool reelLessonSeen,releaseLessonSeen,postFlipLessonPending;
     private float hintTime;
     private string contextHint="";
     private float pluck;
@@ -135,6 +150,8 @@ public sealed class TwinFlightGame : MonoBehaviour
     public void ResetRun()
     {
         State=Mode.Ready;Score=Faults=0;GravitySign=1;RunTime=0;FaultWarning=-1;FlipNotice=0;nextFaultScore=3;
+        GravityPractice=false;postFlipLessonPending=false;FlipCoopReady=true;FlipSettle=0;
+        postFlipTap[0]=postFlipTap[1]=true;
         Best=PlayerPrefs.GetInt("TwinlineBest",0);rng=new System.Random(Seed);nextGate=0;lastCenter=0;
         cooldown[0]=cooldown[1]=buffer[0]=buffer[1]=pulse[0]=pulse[1]=0;
         flash=shake=crashAge=hintTime=pluck=0;contextHint="";ReelUses=0;
@@ -142,14 +159,24 @@ public sealed class TwinFlightGame : MonoBehaviour
         for(int i=0;i<2;i++)
         {
             birds[i].simulated=true;
-            Vector2 spawn=new Vector2(i==0?-1.2f:1.2f,0);
+            Vector2 spawn=IsSolo?Vector2.zero:new Vector2(i==0?-1.2f:1.2f,0);
             birds[i].transform.position=spawn;birds[i].position=spawn;
             birds[i].linearVelocity=Vector2.zero;birds[i].angularVelocity=0;
             birds[i].gravityScale=0;birds[i].simulated=true;
         }
         cameraCenter=SharedCameraTarget();sharedCamera.transform.position=cameraCenter;
         for(int i=0;i<gates.Count;i++) ConfigureGate(gates[i],7.5f+i*pipeSpacing);
+        ApplySinglePlayerMode();
         Physics2D.SyncTransforms();
+    }
+    private void ApplySinglePlayerMode()
+    {
+        if(!built) return;
+        rope.enabled=!IsSolo;
+        tether.enabled=!IsSolo;
+        birds[1].gameObject.SetActive(!IsSolo);
+        birds[1].GetComponent<CircleCollider2D>().enabled=!IsSolo;
+        birds[0].gameObject.name=IsSolo?"Player — W":"P1 — W";
     }
     public void StartRun(bool skipCountdown=false)
     {
@@ -167,11 +194,24 @@ public sealed class TwinFlightGame : MonoBehaviour
             else if(State==Mode.Paused) SetPaused(false);
         }
         if(!ValidationMode && Input.GetKeyDown(KeyCode.Space)) PrimaryAction();
+        if(!ValidationMode && State==Mode.Ready && Input.GetKeyDown(KeyCode.G)) ToggleGravityPractice();
+        if(!ValidationMode && State==Mode.Ready && Input.GetKeyDown(KeyCode.Tab))
+        {
+            if(!singlePlayer) SwitchToSwingMode();
+            else { singlePlayer=false;ResetRun(); }
+        }
         if(!ValidationMode && (State==Mode.Ready || State==Mode.Flying || State==Mode.Countdown))
         {
-            if(Input.GetKeyDown(KeyCode.W)) QueueFlap(0);
-            if(Input.GetKeyDown(KeyCode.UpArrow)) QueueFlap(1);
-            SetHeld(0,Input.GetKey(KeyCode.W));SetHeld(1,Input.GetKey(KeyCode.UpArrow));
+            if(IsSolo)
+            {
+                if(Input.GetKeyDown(KeyCode.W) || Input.GetKeyDown(KeyCode.UpArrow)) QueueFlap(0);
+            }
+            else
+            {
+                if(Input.GetKeyDown(KeyCode.W)) QueueFlap(0);
+                if(Input.GetKeyDown(KeyCode.UpArrow)) QueueFlap(1);
+                SetHeld(0,Input.GetKey(KeyCode.W));SetHeld(1,Input.GetKey(KeyCode.UpArrow));
+            }
         }
         if(State==Mode.Crashed) crashAge+=Time.unscaledDeltaTime;
         flash=Mathf.MoveTowards(flash,0,Time.unscaledDeltaTime*2.8f);
@@ -193,8 +233,62 @@ public sealed class TwinFlightGame : MonoBehaviour
     {
         contextHint=text;hintTime=seconds;
     }
+    public void BeginGravityPractice()
+    {
+        if(State!=Mode.Ready || GravityPractice) return;
+        GravityPractice=true;GravitySign=1;FaultWarning=FirstFlipWarningDuration;FlipNotice=0;
+        ClearHeldInput();
+        for(int i=0;i<2;i++)
+        {
+            birds[i].gravityScale=gravity/9.81f;
+            birds[i].linearVelocity=Vector2.zero;
+            Vector2 spawn=new Vector2(i==0?-1.2f:1.2f,0);
+            birds[i].transform.position=spawn;birds[i].position=spawn;
+        }
+        Play(warningSound,.3f);
+    }
+    public void EndGravityPractice()
+    {
+        if(!GravityPractice) return;
+        GravityPractice=false;FaultWarning=-1;FlipNotice=0;GravitySign=1;
+        ClearHeldInput();tether.distance=ropeLength;
+        for(int i=0;i<2;i++)
+        {
+            birds[i].gravityScale=0;birds[i].linearVelocity=Vector2.zero;
+            Vector2 spawn=new Vector2(i==0?-1.2f:1.2f,0);
+            birds[i].transform.position=spawn;birds[i].position=spawn;
+        }
+    }
+    private void ToggleGravityPractice()
+    {
+        if(GravityPractice) EndGravityPractice();
+        else BeginGravityPractice();
+    }
+    private void StepBirds(float dt,bool applyTerminalFall)
+    {
+        for(int i=0;i<2;i++)
+        {
+            cooldown[i]=Mathf.Max(0,cooldown[i]-dt);
+            if(buffer[i]>0 && cooldown[i]<=0) { Flap(i);buffer[i]=0;cooldown[i]=flapCooldown; }
+            buffer[i]=Mathf.Max(0,buffer[i]-dt);
+            if(applyTerminalFall)
+            {
+                float falling=-birds[i].linearVelocity.y*GravitySign;
+                if(falling>8.5f) birds[i].AddForce(Vector2.up*GravitySign*(falling-8.5f),ForceMode2D.Impulse);
+            }
+        }
+    }
+    private void StepGravityWarning(float dt)
+    {
+        if(FaultWarning<=0) return;
+        int previousBeat=Mathf.CeilToInt(FaultWarning);
+        FaultWarning-=dt;
+        if(FaultWarning<=0) { ReverseGravity();FaultWarning=-1; }
+        else if(Mathf.CeilToInt(FaultWarning)<previousBeat) Play(warningSound,.3f);
+    }
     private void StepRope(float dt)
     {
+        if(IsSolo) return;
         int pulling=0;
         for(int i=0;i<2;i++)
         {
@@ -235,13 +329,23 @@ public sealed class TwinFlightGame : MonoBehaviour
         if(State==Mode.Ready)
         {
             StepRope(dt);
-            for(int i=0;i<2;i++)
+            if(GravityPractice)
             {
-                cooldown[i]=Mathf.Max(0,cooldown[i]-dt);
-                if(buffer[i]>0 && cooldown[i]<=0) { Flap(i);buffer[i]=0;cooldown[i]=flapCooldown; }
-                buffer[i]=Mathf.Max(0,buffer[i]-dt);
-                // No scrolling or falling here: players can safely learn the real rope action.
-                birds[i].AddForce(Vector2.up*(-birds[i].position.y*5-birds[i].linearVelocity.y*2)*birds[i].mass);
+                StepBirds(dt,true);
+                for(int i=0;i<2;i++)
+                {
+                    float edge=Mathf.Abs(birds[i].position.y)-3.5f;
+                    if(edge>0) birds[i].AddForce(Vector2.up*-(Mathf.Sign(birds[i].position.y)*edge*12*birds[i].mass));
+                }
+                StepGravityWarning(dt);
+                FlipNotice=Mathf.Max(0,FlipNotice-dt);
+            }
+            else
+            {
+                StepBirds(dt,false);
+                for(int i=0;i<2;i++)
+                    // No scrolling or falling here: players can safely learn the real rope action.
+                    birds[i].AddForce(Vector2.up*(-birds[i].position.y*5-birds[i].linearVelocity.y*2)*birds[i].mass);
             }
             return;
         }
@@ -254,22 +358,21 @@ public sealed class TwinFlightGame : MonoBehaviour
         if(State!=Mode.Flying) return;
         RunTime+=dt;
         FlipNotice=Mathf.Max(0,FlipNotice-dt);
+        FlipSettle=Mathf.Max(0,FlipSettle-dt);
         hintTime=Mathf.Max(0,hintTime-dt);
-        StepRope(dt);
-        for(int i=0;i<2;i++)
+        if(postFlipLessonPending && FlipNotice<=0 && FaultWarning<0)
         {
-            cooldown[i]=Mathf.Max(0,cooldown[i]-dt);
-            if(buffer[i]>0 && cooldown[i]<=0) { Flap(i);buffer[i]=0;cooldown[i]=flapCooldown; }
-            buffer[i]=Mathf.Max(0,buffer[i]-dt);
-            // Terminal fall speed makes recovering from a fault consistent.
-            float falling=-birds[i].linearVelocity.y*GravitySign;
-            if(falling>8.5f) birds[i].AddForce(Vector2.up*GravitySign*(falling-8.5f),ForceMode2D.Impulse);
+            postFlipLessonPending=false;
+            if(Faults==1) Hint(IsSolo?"TAP W AGAIN AFTER FLIP":"BOTH TAP AFTER FLIP · THEN ONE CAN HOLD",3.5f);
         }
+        StepRope(dt);
+        StepBirds(dt,true);
         foreach(var gate in gates)
         {
-            float scroll=Speed*(FaultWarning>0?WarningScrollFactor:1);
+            float scroll=Speed*TubeScrollFactor;
             gate.body.MovePosition(gate.body.position+Vector2.left*(scroll*dt));
-            if(!gate.scored && gate.body.position.x+.52f<Mathf.Min(birds[0].position.x,birds[1].position.x)-.235f)
+            float scoreLine=IsSolo?birds[0].position.x:Mathf.Min(birds[0].position.x,birds[1].position.x);
+            if(!gate.scored && gate.body.position.x+.52f<scoreLine-.235f)
             {
                 gate.scored=true;Score++;Play(passSound,.2f);
             }
@@ -282,14 +385,8 @@ public sealed class TwinFlightGame : MonoBehaviour
                 ConfigureGate(gate,furthest+pipeSpacing);
             }
         }
-        if(FaultWarning>0)
-        {
-            int previousBeat=Mathf.CeilToInt(FaultWarning);
-            FaultWarning-=dt;
-            if(FaultWarning<=0) { ReverseGravity();FaultWarning=-1; }
-            else if(Mathf.CeilToInt(FaultWarning)<previousBeat) Play(warningSound,.3f);
-        }
-        else if(Score>=nextFaultScore && Faults<100 && TryBeginGravityWarning())
+        StepGravityWarning(dt);
+        if(FaultWarning<0 && Score>=nextFaultScore && Faults<100 && TryBeginGravityWarning())
         {
             nextFaultScore=Score+3+rng.Next(0,3);
         }
@@ -297,7 +394,10 @@ public sealed class TwinFlightGame : MonoBehaviour
     public bool TryBeginGravityWarning()
     {
         if(State!=Mode.Flying || FaultWarning>0 || !IsFaultWindowSafe()) return false;
-        FaultWarning=GravityWarningDuration;
+        bool firstFlip=Faults==0;
+        FaultWarning=firstFlip?FirstFlipWarningDuration:GravityWarningDuration;
+        if(firstFlip) WidenGatesForFirstFlip();
+        ClearHeldInput();
         Play(warningSound,.3f);
         return true;
     }
@@ -307,6 +407,12 @@ public sealed class TwinFlightGame : MonoBehaviour
         float currentLift=birds[player].linearVelocity.y*liftDirection;
         float impulse=Mathf.Min(Mathf.Max(flapImpulse,catchUpLift-currentLift),Mathf.Max(0,maxLiftSpeed-currentLift));
         birds[player].AddForce(Vector2.up*(liftDirection*impulse*birds[player].mass),ForceMode2D.Impulse);
+        if(IsSolo) FlipCoopReady=true;
+        else
+        {
+            postFlipTap[player]=true;
+            if(postFlipTap[0] && postFlipTap[1]) FlipCoopReady=true;
+        }
         pulse[player]=.22f;Play(flapSound,.12f);
     }
     public void ReverseGravity()
@@ -314,19 +420,25 @@ public sealed class TwinFlightGame : MonoBehaviour
         GravitySign=-GravitySign;Faults++;
         for(int i=0;i<2;i++) birds[i].gravityScale=GravitySign*gravity/9.81f;
         // Do not flip velocities, swap controls, teleport, or detach the tether.
+        ClearHeldInput();
+        if(IsSolo) { FlipCoopReady=true;postFlipTap[0]=postFlipTap[1]=true; }
+        else { FlipCoopReady=false;postFlipTap[0]=postFlipTap[1]=false; }
+        FlipSettle=Faults==1?FirstFlipSettleDuration:FlipSettleDuration;
+        postFlipLessonPending=State==Mode.Flying;
         flash=.16f;shake=.075f;FlipNotice=1.2f;Play(faultSound,.35f);
     }
     public bool IsFaultWindowSafe()
     {
-        float rear=Mathf.Min(birds[0].position.x,birds[1].position.x);
-        float lead=Mathf.Max(birds[0].position.x,birds[1].position.x);
+        float rear=IsSolo?birds[0].position.x:Mathf.Min(birds[0].position.x,birds[1].position.x);
+        float lead=IsSolo?birds[0].position.x:Mathf.Max(birds[0].position.x,birds[1].position.x);
+        float warningLead=Faults==0?FirstFlipWarningDuration:GravityWarningDuration;
         foreach(var gate in gates)
         {
             float distance=gate.body.position.x-.52f-lead-.235f;
-            if(distance>0 && distance/Speed<GravityWarningDuration*WarningScrollFactor+1.1f) return false;
+            if(distance>0 && distance/Speed<warningLead*WarningScrollFactor+1.1f) return false;
             if(gate.body.position.x+.52f>rear-.35f && gate.body.position.x-.52f<lead+.35f) return false;
         }
-        return Mathf.Abs(birds[0].position.y)<3.5f && Mathf.Abs(birds[1].position.y)<3.5f;
+        return Mathf.Abs(birds[0].position.y)<3.5f && (IsSolo || Mathf.Abs(birds[1].position.y)<3.5f);
     }
     public void Crash(int player,string reason)
     {
@@ -357,12 +469,31 @@ public sealed class TwinFlightGame : MonoBehaviour
         // Bounded changes produce a learnable line, never arbitrary unreachable jumps.
         lastCenter=Mathf.Clamp(lastCenter+((float)rng.NextDouble()-.5f)*1.25f,-1.5f,1.5f);
         if(nextGate<2) lastCenter=0;
-        gate.center=lastCenter;gate.gap=gap;gate.number=nextGate++;gate.scored=false;gate.body.transform.position=new Vector3(x,0,0);gate.body.position=new Vector2(x,0);
-        float topEdge=gate.center+gap*.5f,bottomEdge=gate.center-gap*.5f;
+        if(nextGate==3) { lastCenter=0;gap=FirstFlipGap; }
+        gate.number=nextGate++;gate.scored=false;gate.body.transform.position=new Vector3(x,0,0);gate.body.position=new Vector2(x,0);
+        ReshapeGate(gate,lastCenter,gap);
+    }
+    private static void ReshapeGate(Gate gate,float center,float gap)
+    {
+        gate.center=center;gate.gap=gap;
+        float topEdge=center+gap*.5f,bottomEdge=center-gap*.5f;
         float topHeight=7-topEdge,bottomHeight=bottomEdge+7;
         gate.upper.transform.localPosition=new Vector3(0,topEdge+topHeight*.5f,0);gate.upper.size=new Vector2(1.04f,topHeight);
         gate.lower.transform.localPosition=new Vector3(0,-7+bottomHeight*.5f,0);gate.lower.size=new Vector2(1.04f,bottomHeight);
         gate.top.localScale=new Vector3(1.04f,topHeight,1);gate.bottom.localScale=new Vector3(1.04f,bottomHeight,1);
+    }
+    private void WidenGatesForFirstFlip()
+    {
+        float lead=IsSolo?birds[0].position.x:Mathf.Max(birds[0].position.x,birds[1].position.x);
+        int widened=0;
+        foreach(var gate in gates)
+        {
+            if(gate.body.position.x>lead-1f && widened<2)
+            {
+                ReshapeGate(gate,0,FirstFlipGap);
+                widened++;
+            }
+        }
     }
     public bool HasTubeContact(int player)
     {
@@ -394,13 +525,27 @@ public sealed class TwinFlightGame : MonoBehaviour
     {
         // A single camera frames the pair with room ahead. Screen edges match the flight limits.
         float halfWidth=sharedCamera.orthographicSize*sharedCamera.aspect;
+        if(IsSolo)
+        {
+            float lead=Mathf.Clamp(halfWidth-1.8f,0,2.5f);
+            return new Vector3(birds[0].position.x+lead,0,-10);
+        }
         float partnerSeparation=Mathf.Abs(birds[0].position.x-birds[1].position.x);
-        float lead=Mathf.Clamp(halfWidth-partnerSeparation*.5f-1.2f,0,2.5f);
-        return new Vector3((birds[0].position.x+birds[1].position.x)*.5f+lead,0,-10);
+        float coopLead=Mathf.Clamp(halfWidth-partnerSeparation*.5f-1.2f,0,2.5f);
+        return new Vector3((birds[0].position.x+birds[1].position.x)*.5f+coopLead,0,-10);
     }
     private void LateUpdate()
     {
         if(!built) return;
+        if(IsSolo)
+        {
+            flapRing[0].enabled=pulse[0]>0;
+            if(pulse[0]>0) Ring(flapRing[0],birds[0].transform.position,.28f+(.22f-pulse[0])*1.6f,Paper,pulse[0]*3);
+            cameraCenter=Vector3.Lerp(cameraCenter,SharedCameraTarget(),1-Mathf.Exp(-6*Time.unscaledDeltaTime));
+            sharedCamera.transform.position=cameraCenter+
+                new Vector3(Mathf.Sin(Time.unscaledTime*67),Mathf.Cos(Time.unscaledTime*73),0)*shake;
+            return;
+        }
         Vector3 a=birds[0].transform.position,b=birds[1].transform.position;
         float distance=Vector2.Distance(a,b),slack=Mathf.Max(0,tether.distance-distance);
         Color tetherColor=Color.Lerp(Muted,Paper,Tension);
@@ -447,18 +592,44 @@ public sealed class TwinFlightGame : MonoBehaviour
         {
             float alpha=State==Mode.Flying?Mathf.Clamp01(3-RunTime):1;
             SmallHint(guiWidth-185,28,170,"ESC · PAUSE",alpha);
-            for(int i=0;i<2;i++)
+            if(IsSolo)
+            {
+                Vector3 p=sharedCamera.WorldToScreenPoint(birds[0].transform.position);
+                SmallHint(p.x/scale-70,(Screen.height-p.y)/scale+34,140,"W",alpha);
+            }
+            else for(int i=0;i<2;i++)
             {
                 Vector3 p=sharedCamera.WorldToScreenPoint(birds[i].transform.position);
                 SmallHint(p.x/scale-70,(Screen.height-p.y)/scale+34,140,i==0?"W":"↑",alpha);
             }
         }
+        if(State==Mode.Ready && !ValidationMode)
+            SmallHint(guiWidth-210,55,200,IsSolo?"TAB · CO-OP MODE":"TAB · SWING MODE",.7f);
         if(State==Mode.Ready)
         {
-            bool pulling=IsReeling(0)||IsReeling(1);
-            string lesson=pulling?(ReelAmount>.98f?"RELEASE TO SWING APART":"KEEP HOLDING TO PULL CLOSER"):
-                "TAP TO LIFT · HOLD THE SAME KEY LONGER TO PULL CLOSER";
-            SmallHint(0,775,guiWidth,lesson,1);
+            if(GravityPractice)
+            {
+                if(FaultWarning>0)
+                    DrawCountdown(FaultWarning,GravitySign==1?"GRAVITY WILL FLIP ↑":"GRAVITY WILL FLIP ↓",TapDirectionLabel);
+                else if(FlipNotice>0)
+                    FloatingText(new Rect(center-220,142,440,54),GravitySign==1?"GRAVITY ↓":"GRAVITY ↑",warningStyle,
+                        new Color(1,1,1,Mathf.Min(1,FlipNotice*2)));
+                else
+                    SmallHint(0,775,guiWidth,IsSolo?"PRACTICE FLIP · TAP W · G · EXIT":"PRACTICE FLIP · TAP W / ↑ · G · EXIT",1);
+            }
+            else if(IsSolo)
+            {
+                SmallHint(0,775,guiWidth,"TAP W TO LIFT · HOLD DOES NOTHING",1);
+                SmallHint(0,808,guiWidth,"G · TRY GRAVITY FLIP",.85f);
+            }
+            else
+            {
+                bool pulling=IsReeling(0)||IsReeling(1);
+                string lesson=pulling?(ReelAmount>.98f?"RELEASE TO SWING APART":"KEEP HOLDING TO PULL CLOSER"):
+                    "TAP TO LIFT · HOLD THE SAME KEY LONGER TO PULL CLOSER";
+                SmallHint(0,775,guiWidth,lesson,1);
+                SmallHint(0,808,guiWidth,"G · TRY GRAVITY FLIP",.85f);
+            }
         }
         else if(State==Mode.Flying && hintTime>0 && FaultWarning<=0 && FlipNotice<=0)
             SmallHint(0,836,guiWidth,contextHint,Mathf.Min(1,hintTime));
@@ -473,11 +644,11 @@ public sealed class TwinFlightGame : MonoBehaviour
         }
         if(State==Mode.Countdown) DrawCountdown(countdown,"READY",null);
         if((State==Mode.Flying || State==Mode.Paused) && FaultWarning>0)
-            DrawCountdown(FaultWarning,GravitySign==1?"GRAVITY WILL FLIP ↑":"GRAVITY WILL FLIP ↓",
-                GravitySign==1?"THEN TAP ↓":"THEN TAP ↑");
+            DrawCountdown(FaultWarning,GravitySign==1?"GRAVITY WILL FLIP ↑":"GRAVITY WILL FLIP ↓",TapDirectionLabel);
         else if((State==Mode.Flying || State==Mode.Paused) && FlipNotice>0)
             FloatingText(new Rect(center-220,142,440,54),GravitySign==1?"GRAVITY ↓":"GRAVITY ↑",warningStyle,
                 new Color(1,1,1,Mathf.Min(1,FlipNotice*2)));
+        DrawGravityArrow();
         if(flash>0) Box(0,0,guiWidth,900,new Color(1,1,1,flash*.35f));
     }
     private void DrawCountdown(float remaining,string caption,string nextAction)
@@ -503,6 +674,17 @@ public sealed class TwinFlightGame : MonoBehaviour
     private void SmallHint(float x,float y,float width,string text,float alpha)
     {
         FloatingText(new Rect(x,y,width,32),text,hintStyle,new Color(.7f,.7f,.7f,alpha));
+    }
+    private bool ShowsGravityArrow()
+    {
+        return State==Mode.Flying || (State==Mode.Ready && GravityPractice) ||
+            (State==Mode.Paused && beforePause==Mode.Flying);
+    }
+    private void DrawGravityArrow()
+    {
+        if(!ShowsGravityArrow()) return;
+        string arrow=GravitySign==1?"↓":"↑";
+        FloatingText(new Rect(guiWidth-72,88,48,48),arrow,labelStyle,new Color(.62f,.62f,.62f,.9f));
     }
     private Transform Draw(string name,Mesh mesh,Vector2 position,Vector2 scale,Color color,int order,Transform parent)
     {
@@ -538,4 +720,12 @@ public sealed class TwinFlightGame : MonoBehaviour
         var clip=AudioClip.Create("Flight cue",samples.Length,1,rate,false);clip.SetData(samples,0);resources.Add(clip);return clip;
     }
     private void Play(AudioClip clip,float volume) { if(Application.isPlaying && audioSource!=null && clip!=null) audioSource.PlayOneShot(clip,volume); }
+    private void SwitchToSwingMode()
+    {
+        DisposeWorld();built=false;
+        enabled=false;
+        var swingObject=new GameObject("Twinline swing");
+        swingObject.AddComponent<TwinSwingGame>();
+        Destroy(gameObject);
+    }
 }

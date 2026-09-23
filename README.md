@@ -1,8 +1,8 @@
 # Twinline
 
-Two circles. One rope. Keep each other flying.
+Swing on a rope. Collect gems. Let go at the right moment.
 
-A minimal black-and-white co-op game for **two players on one keyboard**. Fly through tubes, pull your partner closer, and adapt when gravity reverses. Both players share one continuous camera view.
+A minimal black-and-white prototype: press **Space** near a node to attach a rope, **Space** again to release and launch into the next arc. The world scrolls; gather gems without hitting the floor or ceiling.
 
 ![Twinline shared-camera gameplay](docs/images/ready.png)
 
@@ -11,20 +11,17 @@ A minimal black-and-white co-op game for **two players on one keyboard**. Fly th
 Download **Twinline-macOS-v0.1.0.zip** from the [Releases page](https://github.com/land-saas/twinline/releases), unzip it, and open **Twinline.app**. Unity is not needed to play.
 
 - **macOS 12 or later**, Intel or Apple silicon.
-- Local two-player play on one keyboard.
-- This prototype is ad-hoc signed, not Apple-notarized; macOS may ask you to approve opening a downloaded app. Only open a copy from the release you trust.
+- This prototype is ad-hoc signed, not Apple-notarized; macOS may ask you to approve opening a downloaded app.
 
 | Key | Action |
 | --- | --- |
-| **W** | Solid circle: tap to lift; hold to pull closer |
-| **↑** | Hollow circle: tap to lift; hold to pull closer |
-| Release | Let the rope extend and swing apart |
-| **Space** | Begin, retry, or resume |
+| **Space** | Begin / retry / resume; in flight: attach or release rope |
+| **Tab** | On ready screen: open the legacy two-player co-op flight mode |
 | **Esc** | Pause / resume |
 
-Try the rope on the safe opening screen before pressing Space. **Hold the same key longer to bring the circles closer.** Holding does not repeat the lift; coordinate so one player pulls while the other taps.
+**Swing mode (default):** one circle, pendulum physics, gems for score. Nodes glow when you're close enough to attach.
 
-Both circles must clear a tube to score. A large two-second warning announces **every gravity reversal**. Your key stays the same and always lifts against the current gravity.
+**Co-op flight (Tab on ready):** the earlier two-player tube-flier with rope reeling and gravity flips — kept for comparison and partner playtests.
 
 ## Open the Unity project
 
@@ -33,16 +30,13 @@ Both circles must clear a tube to score. A large two-second warning announces **
 3. Open with **Unity 6000.3.24f1**.
 4. Open `Assets/Scenes/Flight.unity` and press **Play**.
 
-The scene creates its circles, rope, tubes, and sound at runtime. No external art or asset downloads are required. From the editor, **Twinline → Build Mac App** builds `Twinline.app` beside the project; install the matching Mac build-support module if needed.
+The scene builds its player, nodes, gems, and sound at runtime. No external art is required.
 
 ## Prototype status
 
-Version **0.1.0** includes shared-camera flight, progressive rope reeling, paired scoring, gravity warnings, pause, and retry. Both circles remain dynamic Rigidbody2D bodies joined by a permanent maximum-distance joint. The rope itself does not collide with or wrap around tubes.
+The active prototype is **rope swinging + gem collection**. Co-op flight remains in the codebase (`TwinFlightGame.cs`) and is reachable via **Tab** on the ready screen.
 
-Physics checks passed for two 36-tube routes, continuous holds, partner rescue, momentum, pause, restart, and all 18 scheduled gravity warnings. Eight rendered gameplay states were inspected. These checks establish stability; two human players still need to judge timing and enjoyment.
-
-- [Controls, physics, and tuning](docs/Mechanics.md)
+- [Co-op flight mechanics](docs/Mechanics.md)
 - [Design research and playtest questions](Design-notes.md)
-- [Validation results](Validation.txt)
 
-Run **Twinline → Validate Flight Mechanics** outside Play mode to repeat the physics checks. **Twinline → Capture Gameplay Checks** captures actual gameplay frames beside the project.
+Run **Twinline → Validate Flight Mechanics** to repeat co-op physics checks (spawns a validation instance if the scene is in swing mode).

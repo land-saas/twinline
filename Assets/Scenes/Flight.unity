@@ -145,31 +145,10 @@ MonoBehaviour:
   m_GameObject: {fileID: 265042166}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d58d8e5cf50804476a545eb81de31db8, type: 3}
+  m_Script: {fileID: 11500000, guid: f3a8b2c1d4e5467890ab12cd34ef5678, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::TwinFlightGame
-  birds: []
-  tether: {fileID: 0}
-  sharedCamera: {fileID: 0}
-  rope: {fileID: 0}
-  ropeLength: 2.8
-  gravity: 9.4
-  flapImpulse: 4.2
-  catchUpLift: 3.2
-  maxLiftSpeed: 5.8
-  flapCooldown: 0.14
-  inputBuffer: 0.12
-  baseSpeed: 2.55
-  pipeSpacing: 10.4
-  initialGap: 3.65
-  corridorHalfHeight: 4.9
-  reeledLength: 0.65
-  reelSpeed: 4.2
-  closeReelSpeed: 0.65
-  payoutSpeed: 3.2
-  holdThreshold: 0.18
-  laneSpring: 3.2
-  laneDamping: 0.95
+  m_EditorClassIdentifier: Assembly-CSharp::TwinlineRoot
+  startWithCoopFlight: 0
 --- !u!4 &265042168
 Transform:
   m_ObjectHideFlags: 0
