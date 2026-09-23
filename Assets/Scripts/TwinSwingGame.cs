@@ -24,6 +24,8 @@ public sealed class TwinSwingGame : MonoBehaviour
     public float maxRopeLength=6.8f;
     public float reelSpeed=3.6f;
     public float swingBoost=0.7f;
+    public float minimumSwingSpeed=2.25f;
+    public float momentumAssist=5.5f;
     public const int Seed=4173;
     public static readonly Color PlayerRed=new Color(1f,.28f,.22f);
     public static readonly Color NodeYellow=new Color(1f,.88f,.18f);
@@ -59,11 +61,10 @@ public sealed class TwinSwingGame : MonoBehaviour
     private AudioClip attachSound,releaseSound,gemSound,crashSound;
     private System.Random rng;
     private Vector3 cameraCenter;
-    private float countdown,crashAge,flash,shake,runTime,hintTime,attachPulse,attachRopeLength;
+    private float countdown,crashAge,flash,shake,runTime,attachPulse,attachRopeLength;
     private int nextAnchor,nextGem;
     private bool built;
     private Mode beforePause;
-    private string contextHint="";
     private GUIStyle labelStyle,hintStyle,countStyle;
 
     private void Awake() { BuildWorld();ResetRun(); }
@@ -115,8 +116,7 @@ public sealed class TwinSwingGame : MonoBehaviour
         State=Mode.Ready;Score=0;runTime=0;nextAnchor=0;nextGem=0;
         Best=PlayerPrefs.GetInt("TwinSwingBest",0);
         rng=new System.Random(Seed);
-        countdown=crashAge=flash=shake=hintTime=attachPulse=0;
-        contextHint="";
+        countdown=crashAge=flash=shake=attachPulse=0;
         ReleaseSwing();
         player.simulated=true;
         player.transform.position=player.position=new Vector2(0,1.2f);
@@ -277,14 +277,13 @@ public sealed class TwinSwingGame : MonoBehaviour
             if(countdown<=0)
             {
                 State=Mode.Flying;player.simulated=true;
-                contextHint="SPACE NEAR A GLOWING NODE TO ATTACH";hintTime=4f;
             }
             return;
         }
         if(State!=Mode.Flying) return;
         runTime+=dt;
-        hintTime=Mathf.Max(0,hintTime-dt);
         StepRopeLength(dt);
+        StepSwingAssist();
 
         if(!Attached)
         {
@@ -301,11 +300,26 @@ public sealed class TwinSwingGame : MonoBehaviour
             if(player.position.x<sharedCamera.transform.position.x-9f) Crash("Fell behind");
         }
 
-        if(hintTime<=0 && runTime>2.5f && !Attached)
-        {
-            contextHint="SPACE NEAR A NODE TO ATTACH";
-            hintTime=3f;
-        }
+    }
+
+    private void StepSwingAssist()
+    {
+        if(!Attached || activeAnchor==null) return;
+        Vector2 radial=player.position-activeAnchor.body.position;
+        if(radial.sqrMagnitude<.0001f) return;
+        radial.Normalize();
+
+        Vector2 tangent=new Vector2(-radial.y,radial.x);
+        float tangentialSpeed=Vector2.Dot(player.linearVelocity,tangent);
+        if(Mathf.Abs(tangentialSpeed)>.08f)
+            tangent*=Mathf.Sign(tangentialSpeed);
+        else if(tangent.x<0)
+            tangent=-tangent;
+
+        float speed=Mathf.Abs(tangentialSpeed);
+        if(speed>=minimumSwingSpeed) return;
+        float recovery=1-speed/minimumSwingSpeed;
+        player.AddForce(tangent*(momentumAssist*recovery)*player.mass);
     }
 
     private void RecycleAnchors()
@@ -445,16 +459,7 @@ public sealed class TwinSwingGame : MonoBehaviour
         if(hintStyle==null) hintStyle=new GUIStyle(GUI.skin.label){fontSize=21,alignment=TextAnchor.MiddleCenter};
         if(countStyle==null) countStyle=new GUIStyle(GUI.skin.label){fontSize=112,fontStyle=FontStyle.Bold,alignment=TextAnchor.MiddleCenter};
         float center=guiWidth*.5f;
-        FloatingText(new Rect(center-70,20,140,65),Score.ToString("00"),labelStyle,new Color(.85f,.85f,.85f));
-        FloatingText(new Rect(center-90,78,180,32),"GEMS",hintStyle,Muted);
-
-        if(State==Mode.Ready)
-        {
-            SmallHint(0,760,guiWidth,"SPACE · ATTACH / RELEASE · HOLD W TO REEL SHORTER",1);
-            SmallHint(0,792,guiWidth,"SWING THROUGH GEMS · TAB · CO-OP FLIGHT",.82f);
-        }
-        else if(State==Mode.Flying && hintTime>0)
-            SmallHint(0,836,guiWidth,contextHint,Mathf.Min(1,hintTime));
+        FloatingText(new Rect(center-110,22,220,65),$"GEMS {Score:00}",labelStyle,new Color(.85f,.85f,.85f));
 
         if(State==Mode.Ready || State==Mode.Crashed || State==Mode.Paused)
         {
@@ -463,18 +468,18 @@ public sealed class TwinSwingGame : MonoBehaviour
             if(GUI.Button(new Rect(center-160,830,320,48),action,hintStyle)) HandleSpace();
         }
 
-        if(State==Mode.Flying || State==Mode.Ready)
+        if(State==Mode.Flying)
         {
             FindNearestAnchor(out float nearestDistance);
-            string ropeHint=Attached?"SPACE · RELEASE · HOLD W TO REEL":
-                nearestDistance<=attachRange?$"SPACE · ATTACH ({nearestDistance:0.0}m)":"SPACE · FIND A NODE";
-            SmallHint(center-170,120,340,ropeHint,.92f);
+            string ropeHint=Attached?"SPACE · RELEASE":
+                nearestDistance<=attachRange?"SPACE · ATTACH":"";
+            if(!string.IsNullOrEmpty(ropeHint))
+                SmallHint(center-170,104,340,ropeHint,.92f);
         }
 
         if(State==Mode.Countdown)
         {
-            FloatingText(new Rect(center-260,111,520,43),"SWING",hintStyle,HudPaper);
-            FloatingText(new Rect(center-125,145,250,157),Mathf.CeilToInt(countdown).ToString(),countStyle,HudPaper);
+            FloatingText(new Rect(center-125,122,250,157),Mathf.CeilToInt(countdown).ToString(),countStyle,HudPaper);
         }
 
         if(State==Mode.Paused)
