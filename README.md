@@ -2,7 +2,7 @@
 
 Swing on a rope. Collect gems. Let go at the right moment.
 
-A minimal one-button prototype: tap **Space** near a node to attach or release. When a swing slows down, hold Space and release it to restore momentum. The world scrolls; gather gems without hitting the floor or ceiling.
+A minimal one-button prototype: tap **Space** near a node to attach or release. When a swing slows down, hold Space and release it to restore momentum. The endless course keeps moving while attached; gather gems without hitting the floor or ceiling.
 
 ![Twinline shared-camera gameplay](docs/images/ready.png)
 

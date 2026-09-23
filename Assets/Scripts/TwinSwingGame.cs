@@ -49,6 +49,7 @@ public sealed class TwinSwingGame : MonoBehaviour
     {
         public Rigidbody2D body;
         public Transform ring;
+        public Vector3 restingScale;
     }
 
     private readonly List<Anchor> anchors=new List<Anchor>();
@@ -287,20 +288,22 @@ public sealed class TwinSwingGame : MonoBehaviour
         if(State!=Mode.Flying) return;
         runTime+=dt;
 
-        if(!Attached)
+        float scroll=scrollSpeed*(runTime<5f?.5f:1f)*dt;
+        foreach(var anchor in anchors)
         {
-            float scroll=scrollSpeed*(runTime<5f?.5f:1f)*dt;
-            foreach(var anchor in anchors)
+            // Keep the current pivot stable while the rest of the endless course
+            // advances past it.
+            if(anchor!=activeAnchor)
                 anchor.body.MovePosition(anchor.body.position+Vector2.left*scroll);
-            foreach(var gem in gems)
-            {
-                if(gem.collected) continue;
-                gem.transform.position=gem.transform.position+Vector3.left*scroll;
-            }
-            RecycleAnchors();
-            RecycleGems();
-            if(player.position.x<sharedCamera.transform.position.x-9f) Crash("Fell behind");
         }
+        foreach(var gem in gems)
+        {
+            if(gem.collected) continue;
+            gem.transform.position=gem.transform.position+Vector3.left*scroll;
+        }
+        RecycleAnchors();
+        RecycleGems();
+        if(!Attached && player.position.x<sharedCamera.transform.position.x-9f) Crash("Fell behind");
 
     }
 
@@ -334,6 +337,7 @@ public sealed class TwinSwingGame : MonoBehaviour
     {
         foreach(var anchor in anchors)
         {
+            if(anchor==activeAnchor) continue;
             if(anchor.body.position.x<-8)
             {
                 float furthest=0;
@@ -397,7 +401,7 @@ public sealed class TwinSwingGame : MonoBehaviour
         root.AddComponent<CircleCollider2D>().radius=.16f;
         var ring=Draw("Anchor ring",disc,Vector2.zero,new Vector2(.19f,.19f),NodeYellow,3,root.transform);
         Draw("Anchor core",disc,Vector2.zero,new Vector2(.08f,.08f),PlayerRed,4,root.transform);
-        return new Anchor{body=body,ring=ring};
+        return new Anchor{body=body,ring=ring,restingScale=ring.localScale};
     }
 
     private GemPickup CreateGem(int index)
@@ -430,7 +434,9 @@ public sealed class TwinSwingGame : MonoBehaviour
         foreach(var anchor in anchors)
         {
             bool inRange=!Attached && anchor==highlight && distance<=attachRange;
-            anchor.ring.localScale=Vector3.one*(inRange?1.35f:1f);
+            float factor=anchor==activeAnchor?1.12f:inRange?1.25f:1f;
+            Vector3 target=new Vector3(anchor.restingScale.x*factor,anchor.restingScale.y*factor,1);
+            anchor.ring.localScale=Vector3.Lerp(anchor.ring.localScale,target,1-Mathf.Exp(-10*Time.unscaledDeltaTime));
         }
         float playerScale=.235f*(1+pumpCharge*.5f);
         Vector3 playerTarget=new Vector3(playerScale,playerScale,1);
@@ -466,26 +472,17 @@ public sealed class TwinSwingGame : MonoBehaviour
         float scale=Screen.height/900f;
         float guiWidth=Screen.width/scale;
         GUI.matrix=Matrix4x4.TRS(Vector3.zero,Quaternion.identity,new Vector3(scale,scale,1));
-        if(labelStyle==null) labelStyle=new GUIStyle(GUI.skin.label){fontSize=42,alignment=TextAnchor.MiddleCenter};
+        if(labelStyle==null) labelStyle=new GUIStyle(GUI.skin.label){fontSize=34,alignment=TextAnchor.MiddleLeft};
         if(hintStyle==null) hintStyle=new GUIStyle(GUI.skin.label){fontSize=21,alignment=TextAnchor.MiddleCenter};
         if(countStyle==null) countStyle=new GUIStyle(GUI.skin.label){fontSize=112,fontStyle=FontStyle.Bold,alignment=TextAnchor.MiddleCenter};
         float center=guiWidth*.5f;
-        FloatingText(new Rect(center-110,22,220,65),$"GEMS {Score:00}",labelStyle,new Color(.85f,.85f,.85f));
+        FloatingText(new Rect(24,18,220,52),$"GEMS {Score:00}",labelStyle,new Color(.85f,.85f,.85f));
 
         if(State==Mode.Ready || State==Mode.Crashed)
         {
             string action=State==Mode.Ready?"SPACE · BEGIN":"SPACE · RETRY";
             hintStyle.normal.textColor=HudPaper;
             if(GUI.Button(new Rect(center-160,830,320,48),action,hintStyle)) HandleSpacePressed();
-        }
-
-        if(State==Mode.Flying)
-        {
-            FindNearestAnchor(out float nearestDistance);
-            string ropeHint=pumpCharge>0?"RELEASE · BOOST":Attached?"SPACE · RELEASE / HOLD · BOOST":
-                nearestDistance<=attachRange?"SPACE · ATTACH":"";
-            if(!string.IsNullOrEmpty(ropeHint))
-                SmallHint(center-170,104,340,ropeHint,.92f);
         }
 
         if(State==Mode.Countdown)
